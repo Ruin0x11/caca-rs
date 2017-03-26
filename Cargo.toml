@@ -8,7 +8,7 @@ description = "Safe wrapper for libcaca"
 name = "caca"
 
 [dependencies]
-caca-sys = { path = "https://github.com/Ruin0x11/caca-sys", features = ["enable-x11", "enable-ncurses"] }
+caca-sys = { git = "https://github.com/Ruin0x11/caca-sys", features = ["enable-x11", "enable-ncurses"] }
 bitflags = "0.8.2"
 errno = "0.2.3"
 libc = "0.2.21"
