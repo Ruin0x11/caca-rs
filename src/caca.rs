@@ -27,9 +27,11 @@ pub use event::{
 use std::default::Default;
 use std::ffi::{CStr, CString};
 use std::ptr::null_mut;
+use std::time::Duration;
 
 use caca::*;
 use errno::errno;
+use libc::c_int;
 
 pub enum AnsiColor {
     Black,
@@ -75,6 +77,30 @@ impl AnsiColor {
             AnsiColor::Transparent  => caca::CACA_TRANSPARENT,
         };
         color as u8
+    }
+
+    pub fn from_byte(byte: u8) -> Self {
+        match byte as u32 {
+            caca::CACA_BLACK                =>     AnsiColor::Black,
+            caca::CACA_BLUE                 =>     AnsiColor::Blue,
+            caca::CACA_GREEN                =>     AnsiColor::Green,
+            caca::CACA_CYAN                 =>     AnsiColor::Cyan,
+            caca::CACA_RED                  =>     AnsiColor::Red,
+            caca::CACA_MAGENTA              =>     AnsiColor::Magenta,
+            caca::CACA_BROWN                =>     AnsiColor::Brown,
+            caca::CACA_LIGHTGRAY            =>     AnsiColor::LightGray,
+            caca::CACA_DARKGRAY             =>     AnsiColor::DarkGray,
+            caca::CACA_LIGHTBLUE            =>     AnsiColor::LightBlue,
+            caca::CACA_LIGHTGREEN           =>     AnsiColor::LightGreen,
+            caca::CACA_LIGHTCYAN            =>     AnsiColor::LightCyan,
+            caca::CACA_LIGHTRED             =>     AnsiColor::LightRed,
+            caca::CACA_LIGHTMAGENTA         =>     AnsiColor::LightMagenta,
+            caca::CACA_YELLOW               =>     AnsiColor::Yellow,
+            caca::CACA_WHITE                =>     AnsiColor::White,
+            caca::CACA_DEFAULT              =>     AnsiColor::Default,
+            caca::CACA_TRANSPARENT          =>     AnsiColor::Transparent,
+            _ => panic!("Invalid byte to ansi color conversion!"),
+        }
     }
 }
 
@@ -188,6 +214,7 @@ pub enum CacaError {
     InvalidBrightness,
     InvalidGamma,
     InvalidContrast,
+    InvalidFrameIndex,
     Unknown,
 }
 
@@ -219,8 +246,9 @@ impl CacaDisplay {
 
         // FIXME: The errno is always EINVAL here except with width and height 0!
         match errno().0 {
+            //libc::EINVAL => Err(CacaError::InvalidSize),
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
-            //libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
+            libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
             _      => Ok(CacaDisplay {
                 display: display,
             }),
@@ -269,6 +297,15 @@ impl CacaDisplay {
         unsafe { caca_get_display_time(self.display) }
     }
 
+    pub fn set_display_time(&mut self, usecs: Duration) -> CacaResult {
+        let display_time = (usecs.as_secs() * 1000 + usecs.subsec_nanos() as u64 / 1000000) as c_int;
+        unsafe { caca_set_display_time(self.display, display_time) };
+        match errno().0 {
+            libc::EINVAL => Err(CacaError::InvalidRefreshDelay),
+            _      => Ok(())
+        }
+    }
+
     pub fn width(&self) -> i32 {
         unsafe { caca_get_display_width(self.display) }
     }
@@ -299,14 +336,6 @@ impl CacaDisplay {
         match errno().0 {
             libc::ENOSYS => Err(CacaError::MouseCursorUnsupported),
             _            => Ok(())
-        }
-    }
-
-    pub fn set_display_time(&mut self, usec: i32) -> CacaResult {
-        unsafe { caca_set_display_time(self.display, usec) };
-        match errno().0 {
-            libc::EINVAL => Err(CacaError::InvalidRefreshDelay),
-            _      => Ok(())
         }
     }
 }
@@ -421,6 +450,51 @@ impl<'a> CacaCanvas<'a> {
     pub fn height(&self) -> i32 {
         unsafe { caca_get_canvas_height(self.canvas) as i32 }
     }
+
+    pub fn frame_count(&self) -> i32 {
+        unsafe { caca_get_frame_count(self.canvas) }
+    }
+
+    pub fn set_frame(&mut self, frame_index: i32) -> CacaResult {
+        unsafe { caca_set_frame(self.canvas, frame_index) };
+        match errno().0 {
+            libc::EINVAL => Err(CacaError::InvalidFrameIndex),
+            _            => Ok(()),
+        }
+    }
+
+    pub fn get_frame_name(&self) -> &str {
+        unsafe {
+            let raw_str = caca_get_frame_name(self.canvas);
+            let frame_name = CStr::from_ptr(raw_str);
+            frame_name.to_str().unwrap()
+        }
+    }
+
+    pub fn set_frame_name(&mut self, name: &str) -> CacaResult {
+        let name_cstring = CString::new(name).unwrap();
+        unsafe { caca_set_frame_name(self.canvas, name_cstring.as_ptr()) };
+        match errno().0 {
+            libc::ENOMEM => Err(CacaError::NotEnoughMemory),
+            _            => Ok(()),
+        }
+    }
+
+    pub fn create_frame(&mut self, frame_index: i32) -> CacaResult {
+        unsafe { caca_create_frame(self.canvas, frame_index) };
+        match errno().0 {
+            libc::ENOMEM => Err(CacaError::NotEnoughMemory),
+            _            => Ok(()),
+        }
+    }
+
+    pub fn remove_frame(&mut self, frame_index: i32) -> CacaResult {
+        unsafe { caca_free_frame(self.canvas, frame_index) };
+        match errno().0 {
+            libc::EINVAL => Err(CacaError::InvalidFrameIndex),
+            _            => Ok(()),
+        }
+    }
 }
 
 impl<'a> Drop for CacaCanvas<'a> {
@@ -461,5 +535,12 @@ mod tests {
 
         let result = canvas.set_size(-100, -100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_display_time() {
+        let (_, mut display) = get_canvas_and_display();
+        display.set_display_time(Duration::new(0, 50000000));
+        assert_eq!(display.display_time(), 50000);
     }
 }
