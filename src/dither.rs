@@ -1,9 +1,9 @@
 use std::ffi::{CStr, CString};
 use errno::errno;
-use libc;
+use libc::{self, c_void};
 
 use caca::*;
-use ::{CacaCanvas, CacaColor, CacaError, CacaResult};
+use ::{CacaCanvas, Color, CacaError, CacaResult};
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum DitherAntialias {
@@ -149,13 +149,13 @@ impl DitherAlgorithm {
     }
 }
 
-struct CacaDitherBuilder {
+pub struct CacaDitherBuilder {
     bpp: i32,
     w: i32,
     h: i32,
     pitch: i32,
     mask: (u32, u32, u32, u32),
-    palette: Option<[CacaColor; 256]>,
+    palette: Option<[Color; 256]>,
     brightness: Option<f32>,
     gamma: Option<f32>,
     contrast: Option<f32>,
@@ -206,7 +206,7 @@ impl CacaDitherBuilder {
         }
     }
 
-    pub fn palette<'a>(&'a mut self, palette: [CacaColor; 256]) -> &'a mut CacaDitherBuilder {
+    pub fn palette<'a>(&'a mut self, palette: [Color; 256]) -> &'a mut CacaDitherBuilder {
         self.palette = Some(palette);
         self
     }
@@ -247,7 +247,7 @@ impl CacaDitherBuilder {
     }
 }
 
-struct CacaDither {
+pub struct CacaDither {
     dither: *mut CacaDitherRaw,
 }
 
@@ -272,7 +272,7 @@ impl CacaDither {
     }
 
     #[cfg(never)]
-    pub fn set_palette(&mut self, palette: &[CacaColor; 256]) -> CacaResult {
+    pub fn set_palette(&mut self, palette: &[Color; 256]) -> CacaResult {
         unsafe { caca_set_dither_palette(self.dither) };
 
         match errno().0 {
@@ -374,6 +374,20 @@ impl CacaDither {
         // should never be invalid, due to the wrapped enum
         let algorithm_cstring = algorithm.to_cstring();
         unsafe { caca_set_dither_algorithm(self.dither, algorithm_cstring.as_ptr()) };
+    }
+
+    pub unsafe fn as_ptr(&self) -> *const CacaDitherRaw {
+        self.dither
+    }
+}
+
+impl<'a> CacaCanvas<'a> {
+    pub fn dither_bitmap<T: Into<Vec<u8>>>(&mut self, x: i32, y: i32, w: i32, h: i32, dither: &CacaDither, image: T) {
+        let image_buffer = image.into();
+        unsafe { caca_dither_bitmap(self.canvas,
+                                    x, y, w, h,
+                                    dither.as_ptr(),
+                                    image_buffer.as_ptr() as *const c_void) };
     }
 }
 

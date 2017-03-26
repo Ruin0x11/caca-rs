@@ -3,8 +3,26 @@ extern crate errno;
 extern crate libc;
 extern crate caca_sys as caca;
 
-mod dither;
-mod primitives;
+pub mod dither;
+pub mod event;
+pub mod keyboard;
+pub mod primitives;
+
+pub use keyboard::Key;
+pub use dither::CacaDither;
+
+pub use event::{
+    Event,
+        EVENT_NONE,
+        EVENT_KEY_PRESS,
+        EVENT_KEY_RELEASE,
+        EVENT_MOUSE_PRESS,
+        EVENT_MOUSE_RELEASE,
+        EVENT_MOUSE_MOTION,
+        EVENT_RESIZE,
+        EVENT_QUIT,
+        EVENT_ANY,
+};
 
 use std::default::Default;
 use std::ffi::{CStr, CString};
@@ -36,7 +54,7 @@ pub enum AnsiColor {
 
 impl AnsiColor {
     fn as_byte(&self) -> u8 {
-        match *self {
+        let color = match *self {
             AnsiColor::Black        => caca::CACA_BLACK,
             AnsiColor::Blue         => caca::CACA_BLUE,
             AnsiColor::Green        => caca::CACA_GREEN,
@@ -55,7 +73,8 @@ impl AnsiColor {
             AnsiColor::White        => caca::CACA_WHITE,
             AnsiColor::Default      => caca::CACA_DEFAULT,
             AnsiColor::Transparent  => caca::CACA_TRANSPARENT,
-        }
+        };
+        color as u8
     }
 }
 
@@ -67,19 +86,6 @@ bitflags! {
         const CACA_UNDERLINE = caca::CACA_UNDERLINE,
         const CACA_BLINK = caca::CACA_BLINK,
     }
-}
-
-pub enum Event {
-    None,
-    // KeyPress(Key),
-    // KeyRelease(Key),
-    // MousePress(MouseButton),
-    // MouseRelease(MouseButton),
-    MouseMotion(i32, i32),
-    Resize(i32, i32),
-    Quit,
-    Any,
-    Unknown(isize),
 }
 
 pub enum Visibility {
@@ -97,7 +103,7 @@ impl Visibility {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum DriverType {
+pub enum Driver {
     Null,
     Raw,
     Cocoa,
@@ -111,55 +117,38 @@ pub enum DriverType {
     Unknown,
 }
 
-pub enum CharWidth {
-    HalfWidth,
-    FullWidth,
-}
-
-impl DriverType {
-    fn from_cstr(cs: &CStr) -> DriverType {
+impl Driver {
+    fn from_cstr(cs: &CStr) -> Driver {
         let string = cs.to_str().unwrap();
         match string {
-            "null"    => DriverType::Null,
-            "raw"     => DriverType::Raw,
-            "cocoa"   => DriverType::Cocoa,
-            "conio"   => DriverType::Conio,
-            "gl"      => DriverType::GL,
-            "ncurses" => DriverType::NCurses,
-            "slang"   => DriverType::SLang,
-            "vga"     => DriverType::VGA,
-            "win32"   => DriverType::Win32,
-            "x11"     => DriverType::X11,
-            _         => DriverType::Unknown,
+            "null"    => Driver::Null,
+            "raw"     => Driver::Raw,
+            "cocoa"   => Driver::Cocoa,
+            "conio"   => Driver::Conio,
+            "gl"      => Driver::GL,
+            "ncurses" => Driver::NCurses,
+            "slang"   => Driver::SLang,
+            "vga"     => Driver::VGA,
+            "win32"   => Driver::Win32,
+            "x11"     => Driver::X11,
+            _         => Driver::Unknown,
         }
     }
     fn to_cstring(&self) -> CString {
         let driver_name = match *self {
-            DriverType::Unknown |
-            DriverType::Null    => "null",
-            DriverType::Raw     => "raw",
-            DriverType::Cocoa   => "cocoa",
-            DriverType::Conio   => "conio",
-            DriverType::GL      => "gl",
-            DriverType::NCurses => "ncurses",
-            DriverType::SLang   => "slang",
-            DriverType::VGA     => "vga",
-            DriverType::Win32   => "win32",
-            DriverType::X11     => "x11",
+            Driver::Unknown |
+            Driver::Null    => "null",
+            Driver::Raw     => "raw",
+            Driver::Cocoa   => "cocoa",
+            Driver::Conio   => "conio",
+            Driver::GL      => "gl",
+            Driver::NCurses => "ncurses",
+            Driver::SLang   => "slang",
+            Driver::VGA     => "vga",
+            Driver::Win32   => "win32",
+            Driver::X11     => "x11",
         };
         CString::new(driver_name).unwrap()
-    }
-}
-
-// type EventResult = Result<Event, EventError>;
-
-#[cfg(never)]
-fn unpack_event(event_type: c_uint, ev: &CacaEventRaw) -> EventResult {
-    match event_type {
-        caca::CACA_EVENT_NONE => Ok(Event::None),
-        caca::CACA_EVENT_KEY_PRESS => Ok(
-            Event::KeyEvent()
-        )
     }
 }
 
@@ -170,7 +159,7 @@ pub struct CacaDisplay {
 #[derive(Clone, Copy)]
 pub struct InitOptions<'b, 'a: 'b> {
     pub canvas: Option<&'b CacaCanvas<'a>>,
-    pub driver: Option<DriverType>,
+    pub driver: Option<Driver>,
     pub buffer_stderr: bool,
 }
 
@@ -202,7 +191,7 @@ pub enum CacaError {
     Unknown,
 }
 
-pub struct CacaColor {
+pub struct Color {
     pub r: u32,
     pub g: u32,
     pub b: u32,
@@ -214,7 +203,7 @@ pub type CacaResult = Result<(), CacaError>;
 impl CacaDisplay {
     pub fn new(opts: InitOptions) -> Result<Self, CacaError> {
         let canvas_ptr = match opts.canvas {
-            Some(canvas_) => unsafe { canvas_.mut_ptr() },
+            Some(canvas_) => unsafe { canvas_.as_mut_ptr() },
             None          => null_mut(),
         };
 
@@ -228,6 +217,7 @@ impl CacaDisplay {
             }
         };
 
+        // FIXME: The errno is always EINVAL here except with width and height 0!
         match errno().0 {
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             //libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
@@ -237,15 +227,15 @@ impl CacaDisplay {
         }
     }
 
-    pub fn display_driver(&self) -> DriverType {
+    pub fn display_driver(&self) -> Driver {
         unsafe {
             let raw_str = caca_get_display_driver(self.display);
             let driver_name = CStr::from_ptr(raw_str);
-            DriverType::from_cstr(driver_name)
+            Driver::from_cstr(driver_name)
         }
     }
 
-    pub fn set_display_driver(&mut self, driver: DriverType) -> CacaResult {
+    pub fn set_display_driver(&mut self, driver: Driver) -> CacaResult {
         let driver_str = driver.to_cstring();
         let result = unsafe { caca_set_display_driver(self.display, driver_str.as_ptr()) };
         if result == -1 {
@@ -256,7 +246,7 @@ impl CacaDisplay {
     }
 
     #[cfg(never)]
-    pub fn driver_list() -> Vec<DriverType> {
+    pub fn driver_list() -> Vec<Driver> {
         let c_list = unsafe { caca_get_display_driver_list() };
         c_list.map(|str| str.as_ptr())
             .map(|ptr| CStr::from_ptr(ptr).to_str().unwrap())
@@ -319,11 +309,6 @@ impl CacaDisplay {
             _      => Ok(())
         }
     }
-
-    // TEMP
-    pub fn wait(&self) {
-        unsafe { caca_get_event(self.display, caca::CACA_EVENT_KEY_PRESS as i32, null_mut(), -1)};
-    }
 }
 
 impl Drop for CacaDisplay {
@@ -361,7 +346,7 @@ impl<'a> CacaCanvas<'a> {
         }
     }
 
-    pub unsafe fn mut_ptr(&self) -> *mut CacaCanvasRaw {
+    pub unsafe fn as_mut_ptr(&self) -> *mut CacaCanvasRaw {
         self.canvas
     }
 
@@ -369,13 +354,8 @@ impl<'a> CacaCanvas<'a> {
         unsafe { caca_set_color_ansi(self.canvas, fg.as_byte(), bg.as_byte()) };
     }
 
-    pub fn put_char(&mut self, x: i32, y: i32, c: char) -> CharWidth {
-        let size = unsafe { caca_put_char(self.canvas, x, y, c as u32) };
-        if size == 2 {
-            CharWidth::FullWidth
-        } else {
-            CharWidth::HalfWidth
-        }
+    pub fn put_char(&mut self, x: i32, y: i32, c: char) -> usize {
+        unsafe { caca_put_char(self.canvas, x, y, c as u32) as usize }
     }
 
     pub fn put_str(&mut self, x: i32, y: i32, s: &str) -> usize {
@@ -434,12 +414,12 @@ impl<'a> CacaCanvas<'a> {
         }
     }
 
-    pub fn width(&self) -> usize {
-        unsafe { caca_get_canvas_width(self.canvas) as usize }
+    pub fn width(&self) -> i32 {
+        unsafe { caca_get_canvas_width(self.canvas) as i32 }
     }
 
-    pub fn height(&self) -> usize {
-        unsafe { caca_get_canvas_height(self.canvas) as usize }
+    pub fn height(&self) -> i32 {
+        unsafe { caca_get_canvas_height(self.canvas) as i32 }
     }
 }
 
@@ -460,7 +440,6 @@ mod tests {
         assert!(canvas.is_ok(), "{:?}", canvas.err());
         let canvas_ok = canvas.unwrap();
         let display = CacaDisplay::new(InitOptions{canvas: Some(&canvas_ok),
-                                                   driver: Some(DriverType::X11),
                                                    ..InitOptions::default()});
         assert!(display.is_ok(), "{:?}, display.err()");
         (canvas_ok, display.unwrap())
@@ -469,8 +448,6 @@ mod tests {
     #[test]
     fn test_resize_canvas() {
         let (mut canvas, _) = get_canvas_and_display();
-
-        canvas.set_size(0, 0);
 
         let result = canvas.set_size(50, 50);
         assert!(result.is_ok(), "{:?}", result.err());
@@ -484,15 +461,5 @@ mod tests {
 
         let result = canvas.set_size(-100, -100);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_display() {
-        let (mut canvas, mut display) = get_canvas_and_display();
-        canvas.set_color_ansi(AnsiColor::White, AnsiColor::Blue);
-        canvas.put_char(10, 10, 'x');
-        canvas.put_str(10, 11, "Doods! String!");
-        display.refresh();
-        display.wait();
     }
 }
