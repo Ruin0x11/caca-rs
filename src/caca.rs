@@ -3,6 +3,7 @@ extern crate errno;
 extern crate libc;
 extern crate caca_sys as caca;
 
+mod dither;
 mod primitives;
 
 use std::default::Default;
@@ -194,13 +195,24 @@ pub enum CacaError {
     WindowTitleUnsupported,
     MousePointerUnsupported,
     MouseCursorUnsupported,
+    InvalidDitherParams,
+    InvalidBrightness,
+    InvalidGamma,
+    InvalidContrast,
     Unknown,
+}
+
+pub struct CacaColor {
+    pub r: u32,
+    pub g: u32,
+    pub b: u32,
+    pub a: u32,
 }
 
 pub type CacaResult = Result<(), CacaError>;
 
 impl CacaDisplay {
-    pub fn new(opts: InitOptions) -> Result<CacaDisplay, CacaError> {
+    pub fn new(opts: InitOptions) -> Result<Self, CacaError> {
         let canvas_ptr = match opts.canvas {
             Some(canvas_) => unsafe { canvas_.mut_ptr() },
             None          => null_mut(),
@@ -328,7 +340,7 @@ pub struct CacaCanvas<'a> {
 }
 
 impl<'a> CacaCanvas<'a> {
-    pub fn new(width: i32, height: i32) -> Result<CacaCanvas<'a>, CacaError> {
+    pub fn new(width: i32, height: i32) -> Result<Self, CacaError> {
         // FIXME: kludge, this should be detected by libcaca
         if width < 0 || height < 0 {
             return Err(CacaError::InvalidSize);
