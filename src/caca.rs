@@ -33,6 +33,7 @@ use caca::*;
 use errno::errno;
 use libc::c_int;
 
+#[derive(Clone, Copy, Debug)]
 pub enum AnsiColor {
     Black,
     Blue,
@@ -379,7 +380,7 @@ impl<'a> CacaCanvas<'a> {
         self.canvas
     }
 
-    pub fn set_color_ansi(&mut self, fg: AnsiColor, bg: AnsiColor) {
+    pub fn set_color_ansi(&mut self, fg: &AnsiColor, bg: &AnsiColor) {
         unsafe { caca_set_color_ansi(self.canvas, fg.as_byte(), bg.as_byte()) };
     }
 
