@@ -1,8 +1,9 @@
 #[macro_use] extern crate bitflags;
 extern crate errno;
 extern crate libc;
-extern crate num;
 extern crate caca_sys as caca;
+
+mod primitives;
 
 use std::default::Default;
 use std::ffi::{CStr, CString};
@@ -11,7 +12,7 @@ use std::ptr::null_mut;
 use caca::*;
 use errno::errno;
 
-pub enum Color {
+pub enum AnsiColor {
     Black,
     Blue,
     Green,
@@ -30,6 +31,31 @@ pub enum Color {
     White,
     Default,
     Transparent,
+}
+
+impl AnsiColor {
+    fn as_byte(&self) -> u8 {
+        match *self {
+            AnsiColor::Black        => caca::CACA_BLACK,
+            AnsiColor::Blue         => caca::CACA_BLUE,
+            AnsiColor::Green        => caca::CACA_GREEN,
+            AnsiColor::Cyan         => caca::CACA_CYAN,
+            AnsiColor::Red          => caca::CACA_RED,
+            AnsiColor::Magenta      => caca::CACA_MAGENTA,
+            AnsiColor::Brown        => caca::CACA_BROWN,
+            AnsiColor::LightGray    => caca::CACA_LIGHTGRAY,
+            AnsiColor::DarkGray     => caca::CACA_DARKGRAY,
+            AnsiColor::LightBlue    => caca::CACA_LIGHTBLUE,
+            AnsiColor::LightGreen   => caca::CACA_LIGHTGREEN,
+            AnsiColor::LightCyan    => caca::CACA_LIGHTCYAN,
+            AnsiColor::LightRed     => caca::CACA_LIGHTRED,
+            AnsiColor::LightMagenta => caca::CACA_LIGHTMAGENTA,
+            AnsiColor::Yellow       => caca::CACA_YELLOW,
+            AnsiColor::White        => caca::CACA_WHITE,
+            AnsiColor::Default      => caca::CACA_DEFAULT,
+            AnsiColor::Transparent  => caca::CACA_TRANSPARENT,
+        }
+    }
 }
 
 bitflags! {
@@ -55,6 +81,20 @@ pub enum Event {
     Unknown(isize),
 }
 
+pub enum Visibility {
+    Hide,
+    Show,
+}
+
+impl Visibility {
+    fn as_flag(&self) -> i32 {
+        match *self {
+            Visibility::Hide => 0,
+            Visibility::Show => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum DriverType {
     Null,
@@ -70,9 +110,15 @@ pub enum DriverType {
     Unknown,
 }
 
+pub enum CharWidth {
+    HalfWidth,
+    FullWidth,
+}
+
 impl DriverType {
-    fn from_str(s: &str) -> DriverType {
-        match s {
+    fn from_cstr(cs: &CStr) -> DriverType {
+        let string = cs.to_str().unwrap();
+        match string {
             "null"    => DriverType::Null,
             "raw"     => DriverType::Raw,
             "cocoa"   => DriverType::Cocoa,
@@ -117,7 +163,6 @@ fn unpack_event(event_type: c_uint, ev: &CacaEventRaw) -> EventResult {
 }
 
 pub struct CacaDisplay {
-    driver: DriverType,
     display: *mut CacaDisplayRaw,
 }
 
@@ -143,13 +188,21 @@ pub enum CacaError {
     NotEnoughMemory,
     FailedToOpenGraphicsDevice,
     InvalidSize,
+    InvalidMaskSize,
     CanvasInUse,
+    InvalidRefreshDelay,
+    WindowTitleUnsupported,
+    MousePointerUnsupported,
+    MouseCursorUnsupported,
+    Unknown,
 }
+
+pub type CacaResult = Result<(), CacaError>;
 
 impl CacaDisplay {
     pub fn new(opts: InitOptions) -> Result<CacaDisplay, CacaError> {
         let canvas_ptr = match opts.canvas {
-            Some(canvas_) => unsafe { canvas_.get_mut_ptr() },
+            Some(canvas_) => unsafe { canvas_.mut_ptr() },
             None          => null_mut(),
         };
 
@@ -163,30 +216,101 @@ impl CacaDisplay {
             }
         };
 
-        // since the CacaDisplay hasn't been created yet, we can't use an
-        // instance method for getting the driver that was actually initialized.
-        let driver = get_driver_i(display);
-
         match errno().0 {
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
-            libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
+            //libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
             _      => Ok(CacaDisplay {
-                driver: driver,
                 display: display,
             }),
         }
     }
 
-    pub fn get_driver(&self) -> DriverType {
-        self.driver
+    pub fn display_driver(&self) -> DriverType {
+        unsafe {
+            let raw_str = caca_get_display_driver(self.display);
+            let driver_name = CStr::from_ptr(raw_str);
+            DriverType::from_cstr(driver_name)
+        }
     }
-}
 
-fn get_driver_i(display: *mut CacaDisplayRaw) -> DriverType {
-    unsafe {
-        let raw_str = caca_get_display_driver(display);
-        let driver_name = CStr::from_ptr(raw_str);
-        DriverType::from_str(driver_name.to_str().unwrap())
+    pub fn set_display_driver(&mut self, driver: DriverType) -> CacaResult {
+        let driver_str = driver.to_cstring();
+        let result = unsafe { caca_set_display_driver(self.display, driver_str.as_ptr()) };
+        if result == -1 {
+            Err(CacaError::Unknown)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(never)]
+    pub fn driver_list() -> Vec<DriverType> {
+        let c_list = unsafe { caca_get_display_driver_list() };
+        c_list.map(|str| str.as_ptr())
+            .map(|ptr| CStr::from_ptr(ptr).to_str().unwrap())
+    }
+
+    pub fn canvas(&self) -> CacaCanvas {
+        let mut displays = Vec::new();
+        displays.push(self);
+        CacaCanvas {
+            canvas: unsafe { caca_get_canvas(self.display) },
+            displays: displays,
+        }
+    }
+
+    pub fn refresh(&mut self) {
+        unsafe { caca_refresh_display(self.display) };
+    }
+
+    pub fn display_time(&self) -> i32 {
+        unsafe { caca_get_display_time(self.display) }
+    }
+
+    pub fn width(&self) -> i32 {
+        unsafe { caca_get_display_width(self.display) }
+    }
+
+    pub fn height(&self) -> i32 {
+        unsafe { caca_get_display_height(self.display) }
+    }
+
+    pub fn set_display_title(&mut self, title: &str) -> CacaResult {
+        let title_cstring = CString::new(title).unwrap();
+        unsafe { caca_set_display_title(self.display, title_cstring.as_ptr()) };
+        match errno().0 {
+            libc::ENOSYS => Err(CacaError::WindowTitleUnsupported),
+            _            => Ok(())
+        }
+    }
+
+    pub fn set_mouse_visibility(&mut self, vis: Visibility) -> CacaResult {
+        unsafe { caca_set_mouse(self.display, vis.as_flag()) };
+        match errno().0 {
+            libc::ENOSYS => Err(CacaError::MousePointerUnsupported),
+            _            => Ok(())
+        }
+    }
+
+    pub fn set_cursor_visibility(&mut self, vis: Visibility) -> CacaResult {
+        unsafe { caca_set_mouse(self.display, vis.as_flag()) };
+        match errno().0 {
+            libc::ENOSYS => Err(CacaError::MouseCursorUnsupported),
+            _            => Ok(())
+        }
+    }
+
+    pub fn set_display_time(&mut self, usec: i32) -> CacaResult {
+        unsafe { caca_set_display_time(self.display, usec) };
+        match errno().0 {
+            libc::EINVAL => Err(CacaError::InvalidRefreshDelay),
+            _      => Ok(())
+        }
+    }
+
+    // TEMP
+    pub fn wait(&self) {
+        unsafe { caca_get_event(self.display, caca::CACA_EVENT_KEY_PRESS as i32, null_mut(), -1)};
     }
 }
 
@@ -205,13 +329,19 @@ pub struct CacaCanvas<'a> {
 
 impl<'a> CacaCanvas<'a> {
     pub fn new(width: i32, height: i32) -> Result<CacaCanvas<'a>, CacaError> {
+        // FIXME: kludge, this should be detected by libcaca
+        if width < 0 || height < 0 {
+            return Err(CacaError::InvalidSize);
+        }
+
         let canvas = unsafe {
             caca_create_canvas(width, height)
         };
 
+        // FIXME: The errno is always EINVAL here except with width and height 0!
         match errno().0 {
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
-            libc::EINVAL => Err(CacaError::InvalidSize),
+            //libc::EINVAL => Err(CacaError::InvalidSize),
             _      => Ok(CacaCanvas {
                 canvas: canvas,
                 displays: Vec::new(),
@@ -219,27 +349,84 @@ impl<'a> CacaCanvas<'a> {
         }
     }
 
-    pub unsafe fn get_mut_ptr(&self) -> *mut CacaCanvasRaw {
+    pub unsafe fn mut_ptr(&self) -> *mut CacaCanvasRaw {
         self.canvas
     }
-}
 
-impl<'a> CacaCanvas<'a> {
-    fn set_size(&mut self, width: i32, height: i32) -> Result<(), CacaError>{
-        unsafe { caca_set_canvas_size(self.canvas, width, height); }
+    pub fn set_color_ansi(&mut self, fg: AnsiColor, bg: AnsiColor) {
+        unsafe { caca_set_color_ansi(self.canvas, fg.as_byte(), bg.as_byte()) };
+    }
+
+    pub fn put_char(&mut self, x: i32, y: i32, c: char) -> CharWidth {
+        let size = unsafe { caca_put_char(self.canvas, x, y, c as u32) };
+        if size == 2 {
+            CharWidth::FullWidth
+        } else {
+            CharWidth::HalfWidth
+        }
+    }
+
+    pub fn put_str(&mut self, x: i32, y: i32, s: &str) -> usize {
+        let cstring = CString::new(s).unwrap();
+        unsafe { caca_put_str(self.canvas, x, y, cstring.as_ptr()) as usize}
+    }
+
+    pub fn clear(&mut self) {
+        unsafe { caca_clear_canvas(self.canvas) };
+    }
+
+    pub fn set_handle(&mut self, x: i32, y: i32) {
+        unsafe { caca_set_canvas_handle(self.canvas, x, y) };
+    }
+
+    pub fn handle_x(&self) -> i32 {
+        unsafe { caca_get_canvas_handle_x(self.canvas) }
+    }
+
+    pub fn handle_y(&self) -> i32 {
+        unsafe { caca_get_canvas_handle_y(self.canvas) }
+    }
+
+    pub fn blit(&mut self, x: i32, y: i32, source: &CacaCanvas, mask: &CacaCanvas) -> CacaResult {
+        unsafe { caca_blit(self.canvas, x, y, source.canvas, mask.canvas) };
+        match errno().0 {
+            libc::EINVAL => Err(CacaError::InvalidMaskSize),
+            _            => Ok(())
+        }
+    }
+
+    pub fn set_boundaries(&mut self, x: i32, y: i32, w: i32, h: i32) -> CacaResult {
+        unsafe { caca_set_canvas_boundaries(self.canvas, x, y, w, h) };
         match errno().0 {
             libc::EINVAL => Err(CacaError::InvalidSize),
+            libc::EBUSY  => Err(CacaError::CanvasInUse),
+            libc::ENOMEM => Err(CacaError::NotEnoughMemory),
+            _            => Ok(())
+        }
+    }
+
+    pub fn set_size(&mut self, width: i32, height: i32) -> CacaResult {
+        // FIXME: kludge, this should be detected by libcaca
+        if width < 0 || height < 0 {
+            return Err(CacaError::InvalidSize);
+        }
+
+        unsafe { caca_set_canvas_size(self.canvas, width, height); }
+        println!("{} {} {:?}", width, height, errno().0);
+        // FIXME: The errno is always EINVAL here except with width and height 0!
+        match errno().0 {
+            //libc::EINVAL => Err(CacaError::InvalidSize),
             libc::EBUSY  => Err(CacaError::CanvasInUse),
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             _      => Ok(()),
         }
     }
 
-    fn width(&self) -> usize {
+    pub fn width(&self) -> usize {
         unsafe { caca_get_canvas_width(self.canvas) as usize }
     }
 
-    fn height(&self) -> usize {
+    pub fn height(&self) -> usize {
         unsafe { caca_get_canvas_height(self.canvas) as usize }
     }
 }
@@ -261,7 +448,7 @@ mod tests {
         assert!(canvas.is_ok(), "{:?}", canvas.err());
         let canvas_ok = canvas.unwrap();
         let display = CacaDisplay::new(InitOptions{canvas: Some(&canvas_ok),
-                                                   driver: Some(DriverType::Null),
+                                                   driver: Some(DriverType::X11),
                                                    ..InitOptions::default()});
         assert!(display.is_ok(), "{:?}, display.err()");
         (canvas_ok, display.unwrap())
@@ -270,6 +457,8 @@ mod tests {
     #[test]
     fn test_resize_canvas() {
         let (mut canvas, _) = get_canvas_and_display();
+
+        canvas.set_size(0, 0);
 
         let result = canvas.set_size(50, 50);
         assert!(result.is_ok(), "{:?}", result.err());
@@ -283,5 +472,15 @@ mod tests {
 
         let result = canvas.set_size(-100, -100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_display() {
+        let (mut canvas, mut display) = get_canvas_and_display();
+        canvas.set_color_ansi(AnsiColor::White, AnsiColor::Blue);
+        canvas.put_char(10, 10, 'x');
+        canvas.put_str(10, 11, "Doods! String!");
+        display.refresh();
+        display.wait();
     }
 }
