@@ -1,0 +1,15 @@
+[package]
+name = "caca"
+version = "0.1.0"
+authors = ["Ian Pickering <ipickering2@gmail.com>"]
+description = "Safe wrapper for libcaca"
+
+[lib]
+name = "caca"
+
+[dependencies]
+caca-sys = { git = "https://github.com/ruin0x11/caca-sys" }
+num = "0.1.37"
+bitflags = "0.8.2"
+errno = "0.2.3"
+libc = "0.2.21"
