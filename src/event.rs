@@ -2,7 +2,7 @@ use std::mem;
 use std::time::Duration;
 use libc::{c_int, c_char};
 
-use ::{CacaDisplay, CacaEventRaw};
+use ::{Display, CacaEventRaw};
 use caca::*;
 use keyboard::Key;
 
@@ -77,7 +77,7 @@ const NIL_RAW_EVENT: CacaEventRaw = CacaEventRaw { type_: 0, data: [0, 0, 0, 0,
                                                                     0, 0, 0, 0,
                                                                     0, 0, 0, 0] };
 
-impl CacaDisplay {
+impl Display {
     pub fn poll_event(&self, mask: u32) -> Option<Event> {
         let mut ev = NIL_RAW_EVENT;
         unsafe { caca_get_event(self.display, mask as c_int, &mut ev, -1)};
@@ -146,9 +146,6 @@ fn resize_from_raw(ev: &CacaEventRaw) -> (i32, i32) {
     let raw = unsafe { transmute_resize_event(ev.data) };
     (raw.w, raw.h)
 }
-
-// NOTE: Any way to specify exact size of struct, to allow generic raw event
-// type?
 
 unsafe fn transmute_key_event(data: [u8; 16]) -> KeyEventRaw {
     mem::transmute::<[u8; 16], KeyEventRaw>(data)

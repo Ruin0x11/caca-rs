@@ -1,7 +1,7 @@
-use ::CacaCanvas;
+use ::Canvas;
 use caca::*;
 
-impl<'a> CacaCanvas<'a> {
+impl<'a> Canvas<'a> {
     pub fn draw_line(&mut self, x: i32, y: i32, w: i32, h: i32, c: char) {
         unsafe { caca_draw_line(self.canvas, x, y, w, h, c as u32) };
     }
@@ -77,7 +77,7 @@ impl<'a> CacaCanvas<'a> {
 
     #[cfg(never)]
     pub fn fill_triangle_textured(&mut self, coords: &[(i32, i32); 3],
-                                  tex: &CacaCanvas,
+                                  tex: &Canvas,
                                   tex_coords: &[(i32, i32); 3]) {
         unsafe { caca_fill_triangle(self.canvas,
                                     coords[0].0, coords[0].1,

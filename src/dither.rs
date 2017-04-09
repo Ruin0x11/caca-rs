@@ -3,7 +3,7 @@ use errno::errno;
 use libc::{self, c_void};
 
 use caca::*;
-use ::{CacaCanvas, Color, CacaError, CacaResult};
+use ::{Canvas, Color, CacaError, CacaResult};
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum DitherAntialias {
@@ -149,7 +149,7 @@ impl DitherAlgorithm {
     }
 }
 
-pub struct CacaDitherBuilder {
+pub struct DitherBuilder {
     bpp: i32,
     w: i32,
     h: i32,
@@ -165,8 +165,8 @@ pub struct CacaDitherBuilder {
     algorithm: Option<DitherAlgorithm>,
 }
 
-impl CacaDitherBuilder {
-    pub fn build(&self) -> Result<CacaDither, CacaError>  {
+impl DitherBuilder {
+    pub fn build(&self) -> Result<Dither, CacaError>  {
         let dither = unsafe { caca_create_dither(self.bpp, self.w, self.h,
                                                  self.pitch,
                                                  self.mask.0, self.mask.1,
@@ -176,7 +176,7 @@ impl CacaDitherBuilder {
             libc::EINVAL => Err(CacaError::InvalidDitherParams),
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             _            => {
-                let mut caca_dither = CacaDither { dither: dither };
+                let mut caca_dither = Dither { dither: dither };
                 // if let Some(palette_) = self.palette {
                 //     caca_dither.set_palette(palette_);
                 // }
@@ -206,55 +206,55 @@ impl CacaDitherBuilder {
         }
     }
 
-    pub fn palette<'a>(&'a mut self, palette: [Color; 256]) -> &'a mut CacaDitherBuilder {
+    pub fn palette<'a>(&'a mut self, palette: [Color; 256]) -> &'a mut DitherBuilder {
         self.palette = Some(palette);
         self
     }
 
-    pub fn brightness<'a>(&'a mut self, brightness: f32) -> &'a mut CacaDitherBuilder {
+    pub fn brightness<'a>(&'a mut self, brightness: f32) -> &'a mut DitherBuilder {
         self.brightness = Some(brightness);
         self
     }
 
-    pub fn gamma<'a>(&'a mut self, gamma: f32) -> &'a mut CacaDitherBuilder {
+    pub fn gamma<'a>(&'a mut self, gamma: f32) -> &'a mut DitherBuilder {
         self.gamma = Some(gamma);
         self
     }
 
-    pub fn contrast<'a>(&'a mut self, contrast: f32) -> &'a mut CacaDitherBuilder {
+    pub fn contrast<'a>(&'a mut self, contrast: f32) -> &'a mut DitherBuilder {
         self.contrast = Some(contrast);
         self
     }
 
-    pub fn antialias<'a>(&'a mut self, antialias: DitherAntialias) -> &'a mut CacaDitherBuilder {
+    pub fn antialias<'a>(&'a mut self, antialias: DitherAntialias) -> &'a mut DitherBuilder {
         self.antialias = Some(antialias);
         self
     }
 
-    pub fn color_mode<'a>(&'a mut self, color_mode: DitherColorMode) -> &'a mut CacaDitherBuilder {
+    pub fn color_mode<'a>(&'a mut self, color_mode: DitherColorMode) -> &'a mut DitherBuilder {
         self.color_mode = Some(color_mode);
         self
     }
 
-    pub fn charset<'a>(&'a mut self, charset: DitherCharset) -> &'a mut CacaDitherBuilder {
+    pub fn charset<'a>(&'a mut self, charset: DitherCharset) -> &'a mut DitherBuilder {
         self.charset = Some(charset);
         self
     }
 
-    pub fn algorithm<'a>(&'a mut self, algorithm: DitherAlgorithm) -> &'a mut CacaDitherBuilder {
+    pub fn algorithm<'a>(&'a mut self, algorithm: DitherAlgorithm) -> &'a mut DitherBuilder {
         self.algorithm = Some(algorithm);
         self
     }
 }
 
-pub struct CacaDither {
+pub struct Dither {
     dither: *mut CacaDitherRaw,
 }
 
-impl CacaDither {
+impl Dither {
     pub fn new(bpp: i32, w: i32, h: i32, pitch: i32,
-               mask: (u32, u32, u32, u32)) -> CacaDitherBuilder {
-        CacaDitherBuilder {
+               mask: (u32, u32, u32, u32)) -> DitherBuilder {
+        DitherBuilder {
             bpp: bpp,
             w: w,
             h: h,
@@ -381,8 +381,8 @@ impl CacaDither {
     }
 }
 
-impl<'a> CacaCanvas<'a> {
-    pub fn dither_bitmap<T: Into<Vec<u8>>>(&mut self, x: i32, y: i32, w: i32, h: i32, dither: &CacaDither, image: T) {
+impl<'a> Canvas<'a> {
+    pub fn dither_bitmap<T: Into<Vec<u8>>>(&mut self, x: i32, y: i32, w: i32, h: i32, dither: &Dither, image: T) {
         let image_buffer = image.into();
         unsafe { caca_dither_bitmap(self.canvas,
                                     x, y, w, h,
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let dither = CacaDither::new(8, 100, 100, 16, (0, 0, 0, 0))
+        let dither = Dither::new(8, 100, 100, 16, (0, 0, 0, 0))
         //.palette()
             .brightness(0.23)
             .gamma(0.75)

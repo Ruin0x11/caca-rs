@@ -9,7 +9,7 @@ pub mod keyboard;
 pub mod primitives;
 
 pub use keyboard::Key;
-pub use dither::CacaDither;
+pub use dither::Dither;
 
 pub use event::{
     Event,
@@ -26,6 +26,7 @@ pub use event::{
 
 use std::default::Default;
 use std::ffi::{CStr, CString};
+use std::marker::PhantomData;
 use std::ptr::null_mut;
 use std::time::Duration;
 
@@ -179,13 +180,14 @@ impl Driver {
     }
 }
 
-pub struct CacaDisplay {
+pub struct Display {
     display: *mut CacaDisplayRaw,
+    _phantom: PhantomData<*mut ()>,
 }
 
 #[derive(Clone, Copy)]
 pub struct InitOptions<'b, 'a: 'b> {
-    pub canvas: Option<&'b CacaCanvas<'a>>,
+    pub canvas: Option<&'b Canvas<'a>>,
     pub driver: Option<Driver>,
     pub buffer_stderr: bool,
 }
@@ -228,7 +230,7 @@ pub struct Color {
 
 pub type CacaResult = Result<(), CacaError>;
 
-impl CacaDisplay {
+impl Display {
     pub fn new(opts: InitOptions) -> Result<Self, CacaError> {
         let canvas_ptr = match opts.canvas {
             Some(canvas_) => unsafe { canvas_.as_mut_ptr() },
@@ -247,11 +249,12 @@ impl CacaDisplay {
 
         // FIXME: The errno is always EINVAL here except with width and height 0!
         match errno().0 {
-            //libc::EINVAL => Err(CacaError::InvalidSize),
+            libc::EINVAL => Err(CacaError::InvalidSize),
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             libc::ENODEV => Err(CacaError::FailedToOpenGraphicsDevice),
-            _      => Ok(CacaDisplay {
+            _      => Ok(Display {
                 display: display,
+                _phantom: PhantomData,
             }),
         }
     }
@@ -281,12 +284,13 @@ impl CacaDisplay {
             .map(|ptr| CStr::from_ptr(ptr).to_str().unwrap())
     }
 
-    pub fn canvas(&self) -> CacaCanvas {
+    pub fn canvas(&self) -> Canvas {
         let mut displays = Vec::new();
         displays.push(self);
-        CacaCanvas {
+        Canvas {
             canvas: unsafe { caca_get_canvas(self.display) },
             displays: displays,
+            _phantom: PhantomData,
         }
     }
 
@@ -294,7 +298,7 @@ impl CacaDisplay {
         unsafe { caca_refresh_display(self.display) };
     }
 
-    pub fn display_time(&self) -> i32 {
+    pub fn calculated_display_time(&self) -> i32 {
         unsafe { caca_get_display_time(self.display) }
     }
 
@@ -341,7 +345,7 @@ impl CacaDisplay {
     }
 }
 
-impl Drop for CacaDisplay {
+impl Drop for Display {
     fn drop(&mut self) {
         unsafe {
             caca_free_display(self.display);
@@ -349,12 +353,13 @@ impl Drop for CacaDisplay {
     }
 }
 
-pub struct CacaCanvas<'a> {
+pub struct Canvas<'a> {
     canvas: *mut CacaCanvasRaw,
-    displays: Vec<&'a CacaDisplay>,
+    displays: Vec<&'a Display>,
+    _phantom: PhantomData<*mut ()>,
 }
 
-impl<'a> CacaCanvas<'a> {
+impl<'a> Canvas<'a> {
     pub fn new(width: i32, height: i32) -> Result<Self, CacaError> {
         // FIXME: kludge, this should be detected by libcaca
         if width < 0 || height < 0 {
@@ -369,9 +374,10 @@ impl<'a> CacaCanvas<'a> {
         match errno().0 {
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             //libc::EINVAL => Err(CacaError::InvalidSize),
-            _      => Ok(CacaCanvas {
+            _      => Ok(Canvas {
                 canvas: canvas,
                 displays: Vec::new(),
+                _phantom: PhantomData,
             }),
         }
     }
@@ -409,7 +415,7 @@ impl<'a> CacaCanvas<'a> {
         unsafe { caca_get_canvas_handle_y(self.canvas) }
     }
 
-    pub fn blit(&mut self, x: i32, y: i32, source: &CacaCanvas, mask: &CacaCanvas) -> CacaResult {
+    pub fn blit(&mut self, x: i32, y: i32, source: &Canvas, mask: &Canvas) -> CacaResult {
         unsafe { caca_blit(self.canvas, x, y, source.canvas, mask.canvas) };
         match errno().0 {
             libc::EINVAL => Err(CacaError::InvalidMaskSize),
@@ -429,15 +435,15 @@ impl<'a> CacaCanvas<'a> {
 
     pub fn set_size(&mut self, width: i32, height: i32) -> CacaResult {
         // FIXME: kludge, this should be detected by libcaca
-        if width < 0 || height < 0 {
-            return Err(CacaError::InvalidSize);
-        }
+        // if width < 0 || height < 0 {
+        //     return Err(CacaError::InvalidSize);
+        // }
 
-        unsafe { caca_set_canvas_size(self.canvas, width, height); }
-        println!("{} {} {:?}", width, height, errno().0);
+        unsafe { let i = caca_set_canvas_size(self.canvas, width, height);
+                 println!("ret is: {}", i) }
         // FIXME: The errno is always EINVAL here except with width and height 0!
         match errno().0 {
-            //libc::EINVAL => Err(CacaError::InvalidSize),
+            libc::EINVAL => Err(CacaError::InvalidSize),
             libc::EBUSY  => Err(CacaError::CanvasInUse),
             libc::ENOMEM => Err(CacaError::NotEnoughMemory),
             _      => Ok(()),
@@ -498,7 +504,7 @@ impl<'a> CacaCanvas<'a> {
     }
 }
 
-impl<'a> Drop for CacaCanvas<'a> {
+impl<'a> Drop for Canvas<'a> {
     fn drop(&mut self) {
         unsafe {
             caca_free_canvas(self.canvas);
@@ -508,15 +514,18 @@ impl<'a> Drop for CacaCanvas<'a> {
 
 #[cfg(test)]
 mod tests {
+    //! NOTE: These tests have to be run in a single-threaded environment
+    //! (RUST_TEST_THREADS=1), because the raw libcaca primitives are not
+    //! thread-safe.
     use super::*;
 
-    fn get_canvas_and_display() -> (CacaCanvas<'static>, CacaDisplay) {
-        let canvas = CacaCanvas::new(100, 100);
+    fn get_canvas_and_display() -> (Canvas<'static>, Display) {
+        let canvas = Canvas::new(100, 100);
         assert!(canvas.is_ok(), "{:?}", canvas.err());
         let canvas_ok = canvas.unwrap();
-        let display = CacaDisplay::new(InitOptions{canvas: Some(&canvas_ok),
-                                                   ..InitOptions::default()});
-        assert!(display.is_ok(), "{:?}, display.err()");
+        let display = Display::new(InitOptions{canvas: Some(&canvas_ok),
+                                               ..InitOptions::default()});
+        assert!(display.is_ok(), "{:?}", display.err());
         (canvas_ok, display.unwrap())
     }
 
@@ -536,12 +545,5 @@ mod tests {
 
         let result = canvas.set_size(-100, -100);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_set_display_time() {
-        let (_, mut display) = get_canvas_and_display();
-        display.set_display_time(Duration::new(0, 50000000));
-        assert_eq!(display.display_time(), 50000);
     }
 }
