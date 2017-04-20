@@ -3,6 +3,13 @@ name = "caca"
 version = "0.1.0"
 authors = ["Ian Pickering <ipickering2@gmail.com>"]
 description = "Safe wrapper for libcaca"
+readme = "README.md"
+homepage = "https://www.github.com/Ruin0x11/caca-rs"
+documentation = "https://www.github.com/Ruin0x11/caca-rs"
+repository = "https://www.github.com/Ruin0x11/caca-rs"
+keywords = ["tui"]
+categories = ["command-line-interface", "gui"]
+license = "WTFPL"
 
 [lib]
 name = "caca"
